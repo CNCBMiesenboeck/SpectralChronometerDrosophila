@@ -58,12 +58,14 @@ if testingFlag
     modelEvalSettings.areaSamplesPerParam = 100;
     modelEvalSettings.burninEachFlag = true;
     modelEvalSettings.parallelFlag = false;
+    modelEvalSettings.nWorkers = 1;
 else
     modelEvalSettings.slicesamplesPerParam = 10000; % publication:  10000
     modelEvalSettings.burninPerParam = 100;         %               100
     modelEvalSettings.areaSamplesPerParam = 2000;   %               2000
     modelEvalSettings.burninEachFlag = true;        %               true
     modelEvalSettings.parallelFlag = true;          %               true
+    modelEvalSettings.nWorkers = 6;                 %               6
 end
 modelEvalSettings.rndSeed = 1;                      %               1
 
@@ -229,13 +231,14 @@ ggInd = 1; % global model selector (see globalModelConfig in section 4.1)
 parameterInd = 1; % 1 = Gaussian centres, 2 = widths, 3 = amplitudes
 odIndOpts = 1:2; % leave this as is. 1 = early-reinforced odour, 2 = late-reinforced.
 % set up the figure
-figure('OuterPosition',[50,50,1200,500]);
+figure('OuterPosition',[50,50,numel(odIndOpts)*560,500]);
 hAxTemp = gobjects(numel(odIndOpts),1);
-for odInd = odIndOpts
-    hAxTemp(odInd) = subplot(1,numel(odIndOpts),odInd);
+for axInd = 1:numel(odIndOpts)
+    odInd = odIndOpts(axInd);
+    hAxTemp(axInd) = subplot(1,numel(odIndOpts),axInd);
     % See comments in function plotHistogram in section 5 below.
     plotHistogram(globSamples{ggInd+1},parameterInd,odInd,...
-        paramsMap{ggInd+1},globDescription{ggInd+1},hAxTemp(odInd));
+        paramsMap{ggInd+1},globDescription{ggInd+1},hAxTemp(axInd));
 end
 hSetAxLims(hAxTemp,'YLim');
 %% Section 4.3
@@ -255,7 +258,7 @@ hSetAxLims(hAxTemp,'YLim');
 % probabilities as in fig 5D.) The dummy model encompasses the data
 % histogram, but is very broad compared to set B or set C, which is why its
 % marginal probability is the weakest.
-ggInd = 2; % global model selector (see globalModelConfig in section 4.1)
+ggInd = 1; % global model selector (see globalModelConfig in section 4.1)
 CI = [2.5,97.5]; % confidence interval (shaded region)
 odIndOpts = 1:2; % leave this as is. 1 = early-reinforced odour, 2 = late-reinforced.
 % set up the figure
@@ -318,7 +321,8 @@ samplesOut = batchSlicesample(initGuesses, ...
     'burnin', modelEstimationSettings.burninPerParam*nParams, ...
     'seed', modelEstimationSettings.rndSeed, ...
     'parallel', modelEstimationSettings.parallelFlag, ...
-    'burnin each', modelEstimationSettings.burninEachFlag);
+    'burnin each', modelEstimationSettings.burninEachFlag, ...
+    'nWorkers', modelEstimationSettings.nWorkers);
 
 % estimate the hyper-area of the supported parameter space within
 % paramLimits. See comments in file estimatePDFSupportArea.m
@@ -434,9 +438,11 @@ data = dataStruct.sortedTimes(epochInd,validMoverInds)';
 % 1.5 s -> timeDivider
 % timeDivider -> odour offset
 hardLimits.timeLimits = [1.5, timeDivider; timeDivider, timeRange(2)]';
-
+hardLimits.timeLimits = [0, timeDivider; timeDivider, timeRange(2)]';
+% hardLimits.timeLimits = [0, timeRange(2); 0, timeRange(2)]';
 % The limits of the widths of the Gaussians are 0.25 -> 2.0
 hardLimits.sigmaLimits = [0.25, 2.0; 0.25, 2.0]';
+hardLimits.sigmaLimits = [0.0, 5; 0.0, 5]';
 
 % The upper limit of the amplitude parameter is defined as the maximum of 
 % the smoothed histogram (stored in dataStruct.movtHistInit) in the 
@@ -514,7 +520,7 @@ switch odInd
         fitColour = [1,0.5,0];
         odourStr = 'early-reinforced odour';
 end
-nSubSample = 1000;
+nSubSample = inf;
 nSamplesIn = size(samples,1);
 if nSamplesIn >= nSubSample
     subSamples = samples(randperm(nSamplesIn,nSubSample),:);
@@ -530,8 +536,11 @@ for ss = 1:nSamples
         subSamples(ss,1:2),subSamples(ss,3:4),subSamples(ss,5:6), ...
         timeScale([1,end]),repmat([-inf;inf],1,6));
 end
+nBest = max(ceil(size(subSamples,1)/100),1);
+hBest = @(cols) mean(samples(1:nBest,cols),1);
 bestFit = multiModeGauss(timeScale, ...
-    samples(1,1:2),samples(1,3:4),samples(1,5:6),...
+    ...mean(samples(1:nBest,1:2),1),mean(samples(1:nBest,3:4),1),mean(samples(1:nBest,5:6),1),...
+    hBest(1:2),hBest(3:4),hBest(5:6),...
     timeScale([1,end]),repmat([-inf;inf],1,6));
 bounds = [prctile(distributions,CI(1),1);prctile(distributions,CI(2),1)];
 if nargin<7 || ~isa(hAx,'matlab.graphics.axis.Axes') || ~isvalid(hAx)
@@ -616,11 +625,11 @@ switch parameterInd
     case 1
         titles = {'Gaussian centres','Time (s)','Density (/s)'};
         indsTemp = 1:2;
-        limsTemp = [1.5,10];
+        limsTemp = [0,10];
     case 2
-        titles = {'Gaussian widths','Time (s)','Density (/s)'};
+        titles = {'Gaussian widths','Width (s)','Density (/s)'};
         indsTemp = 3:4;
-        limsTemp = [0.25,2];
+        limsTemp = [0,5];
     case 3
         titles = {'Gaussian peak height','Amplitude (/s)','Density (s)'};
         indsTemp = 5:6;
@@ -647,6 +656,6 @@ end
 title(sprintf('%s\n%s, %s',modelDesc,titles{1},odourStr));
 xlabel(titles{2});
 ylabel(titles{3});
-legend({'component 1', 'component 2'},'Location','best');
+legend({'early component', 'late component'},'Location','best');
 hAx.XLim = axLims;
 end
